@@ -1,0 +1,39 @@
+name: Inject Lunarist integration
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  inject:
+    if: ${{ !contains(github.event.head_commit.message, '[eugene-lunarist-inject]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inject integration script into public pages
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          pages = ['index.html']
+          marker = '<script src="/lunarist-integration.js?v=1"></script>'
+          for name in pages:
+              p = Path(name)
+              if not p.exists():
+                  continue
+              s = p.read_text(encoding='utf-8')
+              if marker not in s:
+                  if '</body>' not in s:
+                      raise SystemExit(f'{name} has no closing body tag')
+                  s = s.replace('</body>', marker + '\n</body>', 1)
+                  p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit injected page
+        run: |
+          git config user.name 'lunariststudio-bot'
+          git config user.email '41898282+lunaristudio[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet || git commit -m 'chore: inject Lunarist integration [eugene-lunarist-inject]'
+          git push
