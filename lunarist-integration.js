@@ -24,14 +24,32 @@
   `;
   document.head.appendChild(style);
 
-  const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   const readTokens=()=>{try{return JSON.parse(sessionStorage.getItem(STORAGE)||'null')}catch{return null}};
   const saveTokens=t=>sessionStorage.setItem(STORAGE,JSON.stringify(t));
   const clearTokens=()=>sessionStorage.removeItem(STORAGE);
   const b64url=buf=>btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   async function challenge(verifier){return b64url(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier)))}
   function randomVerifier(){const bytes=new Uint8Array(32);crypto.getRandomValues(bytes);return b64url(bytes)}
-  function firebaseUser(){try{return typeof auth!=='undefined'?auth?.currentUser:null}catch{return null}}
+
+  // Firebase Auth can initialize after the page has rendered. Wait for the
+  // authoritative auth-state callback instead of sampling auth.currentUser
+  // after a fixed timeout.
+  function firebaseUser(){
+    try{return typeof auth!=='undefined'?auth?.currentUser:null}catch{return null}
+  }
+  function waitForFirebaseUser(timeout=8000){
+    const current=firebaseUser();
+    if(current)return Promise.resolve(current);
+    return new Promise(resolve=>{
+      let done=false,timer=null,unsubscribe=null;
+      const finish=user=>{if(done)return;done=true;if(timer)clearTimeout(timer);try{unsubscribe?.()}catch{}resolve(user||null)};
+      try{
+        if(typeof auth!=='undefined'&&typeof auth.onAuthStateChanged==='function')unsubscribe=auth.onAuthStateChanged(user=>{if(user)finish(user)});
+        else finish(null);
+      }catch{finish(null)}
+      timer=setTimeout(()=>finish(firebaseUser()),timeout);
+    });
+  }
 
   async function oauthFetch(path,options={}){
     const r=await fetch(`${LUNARIST}${path}`,options);
@@ -41,8 +59,9 @@
   }
 
   async function connect(){
-    const user=firebaseUser();
-    if(!user){render('not_connected','Sign in to Eugene Card first.');return}
+    render('pending','Preparing secure authorization…');
+    const user=await waitForFirebaseUser();
+    if(!user){render('error','Please sign in to Eugene Card first, then connect Lunarist again.');return}
     const verifier=randomVerifier();
     const state=crypto.randomUUID();
     sessionStorage.setItem(CODE_VERIFIER,verifier);
@@ -56,7 +75,7 @@
     u.searchParams.set('code_challenge',ch);
     u.searchParams.set('code_challenge_method','S256');
     u.searchParams.set('state',state);
-    location.href=u.toString();
+    location.replace(u.toString());
   }
 
   async function exchangeCallback(){
@@ -96,10 +115,16 @@
   async function disconnect(){const t=readTokens();try{if(t?.refresh_token)await fetch(`${LUNARIST}/oauth/revoke`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:CLIENT_ID,token:t.refresh_token,token_type_hint:'refresh_token'})})}catch{}clearTokens();render('not_connected','Lunarist disconnected.')}
 
   function panel(){if(document.getElementById('lunaristConnectPanel'))return;const box=document.createElement('aside');box.id='lunaristConnectPanel';box.className='lunarist-connect-panel';box.innerHTML=`<div style="font-size:10px;letter-spacing:.14em;color:#a995ff;font-weight:800">LUNARIST CONNECTION</div><h3>Connect your Lunarist account</h3><p>Use secure OAuth 2.0 authorization to link your Eugene Card account.</p><div class="lunarist-connect-row"><div><div class="lunarist-status"><span class="lunarist-dot" id="lunaristDot"></span><span id="lunaristStatus">Checking…</span></div><div class="lunarist-sub" id="lunaristSub">No Lunarist account linked</div></div><span style="color:#64748b">L</span></div><div class="lunarist-connect-actions"><button class="primary" id="lunaristConnectBtn">Connect Lunarist</button><button id="lunaristDisconnectBtn" style="display:none">Disconnect</button></div></aside>`;document.body.appendChild(box);box.querySelector('#lunaristConnectBtn').onclick=connect;box.querySelector('#lunaristDisconnectBtn').onclick=disconnect}
-  function render(state,sub,profile){panel();const dot=document.getElementById('lunaristDot'),status=document.getElementById('lunaristStatus'),extra=document.getElementById('lunaristSub'),connectBtn=document.getElementById('lunaristConnectBtn'),disconnectBtn=document.getElementById('lunaristDisconnectBtn');dot.className=`lunarist-dot ${state==='connected'?'connected':state==='pending'?'pending':''}`;status.textContent=state==='connected'?'Connected':state==='pending'?'Connecting…':state==='error'?'Connection error':'Not connected';extra.textContent=state==='connected'?(sub||'Lunarist account linked'):(sub||'No Lunarist account linked');connectBtn.textContent=state==='connected'?'Open Lunarist':'Connect Lunarist';connectBtn.onclick=state==='connected'?()=>window.open(LUNARIST,'_blank','noopener,noreferrer'):connect;disconnectBtn.style.display=state==='connected'?'inline-flex':'none'}
+  function render(state,sub){panel();const dot=document.getElementById('lunaristDot'),status=document.getElementById('lunaristStatus'),extra=document.getElementById('lunaristSub'),connectBtn=document.getElementById('lunaristConnectBtn'),disconnectBtn=document.getElementById('lunaristDisconnectBtn');dot.className=`lunarist-dot ${state==='connected'?'connected':state==='pending'?'pending':''}`;status.textContent=state==='connected'?'Connected':state==='pending'?'Connecting…':state==='error'?'Connection error':'Not connected';extra.textContent=state==='connected'?(sub||'Lunarist account linked'):(sub||'No Lunarist account linked');connectBtn.textContent=state==='connected'?'Open Lunarist':'Connect Lunarist';connectBtn.onclick=state==='connected'?()=>window.open(LUNARIST,'_blank','noopener,noreferrer'):connect;disconnectBtn.style.display=state==='connected'?'inline-flex':'none'}
 
   function addCta(){if(document.getElementById('eugeneLunaristCta'))return;const slug=decodeURIComponent(location.pathname.replace(/^\/+|\/+$/g,'').split('/')[0]||'');const blocked=/^(admin|analytics|revenue|login|signup|settings|marketplace)$/i.test(slug);const a=document.createElement('a');a.id='eugeneLunaristCta';a.className='lunarist-cta';a.href=slug&&!blocked?`${LUNARIST}/${encodeURIComponent(slug)}`:LUNARIST;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Commission on Lunarist ↗';document.body.appendChild(a)}
 
-  async function boot(){panel();addCta();if(await exchangeCallback())return;const p=new URLSearchParams(location.search);if(p.get('oauth_start')==='1'){clearPending();await connect();return}await loadStatus()}
+  async function boot(){
+    panel();addCta();
+    if(await exchangeCallback())return;
+    const p=new URLSearchParams(location.search);
+    if(p.get('oauth_start')==='1'){await connect();return}
+    await loadStatus();
+  }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else setTimeout(boot,250);
 })();
