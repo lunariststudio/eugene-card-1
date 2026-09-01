@@ -77,7 +77,7 @@
     return true;
   }
 
-  function clearPending(){sessionStorage.removeItem(CODE_VERIFIER);sessionStorage.removeItem(STATE);try{const u=new URL(location.href);u.searchParams.delete('connect');u.searchParams.delete('code');u.searchParams.delete('state');history.replaceState({},'',u.pathname+(u.search?u.search:'')+(u.hash||''))}catch{}}
+  function clearPending(){sessionStorage.removeItem(CODE_VERIFIER);sessionStorage.removeItem(STATE);try{const u=new URL(location.href);u.searchParams.delete('connect');u.searchParams.delete('code');u.searchParams.delete('state');u.searchParams.delete('oauth_start');history.replaceState({},'',u.pathname+(u.search?u.search:'')+(u.hash||''))}catch{}}
 
   async function refresh(){
     const t=readTokens();if(!t?.refresh_token)return null;
@@ -100,6 +100,6 @@
 
   function addCta(){if(document.getElementById('eugeneLunaristCta'))return;const slug=decodeURIComponent(location.pathname.replace(/^\/+|\/+$/g,'').split('/')[0]||'');const blocked=/^(admin|analytics|revenue|login|signup|settings|marketplace)$/i.test(slug);const a=document.createElement('a');a.id='eugeneLunaristCta';a.className='lunarist-cta';a.href=slug&&!blocked?`${LUNARIST}/${encodeURIComponent(slug)}`:LUNARIST;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Commission on Lunarist ↗';document.body.appendChild(a)}
 
-  async function boot(){panel();addCta();if(await exchangeCallback())return;await loadStatus()}
+  async function boot(){panel();addCta();if(await exchangeCallback())return;const p=new URLSearchParams(location.search);if(p.get('oauth_start')==='1'){clearPending();await connect();return}await loadStatus()}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else setTimeout(boot,250);
 })();
